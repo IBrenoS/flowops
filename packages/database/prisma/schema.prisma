@@ -1,0 +1,229 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// FlowOps — Prisma Schema
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum Plan {
+  STARTER
+  GROWTH
+  PRO
+}
+
+enum UserRole {
+  ADMIN
+  MEMBER
+}
+
+enum WaStatus {
+  CONNECTED
+  DISCONNECTED
+  CONNECTING
+}
+
+enum ERPType {
+  BLING
+  OMIE
+  TINY
+}
+
+enum FlowStatus {
+  ACTIVE
+  PAUSED
+  DRAFT
+}
+
+enum OrderStatus {
+  PENDING     // recebido, aguardando processamento
+  PROCESSING  // sendo processado pela IA
+  COMPLETED   // criado no ERP com sucesso
+  REVIEW      // confiança < 70%, aguarda revisão humana
+  FAILED      // falhou após todas as tentativas
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tenant (distribuidora)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Tenant {
+  id           String   @id @default(cuid())
+  name         String                        // nome da distribuidora
+  email        String   @unique
+  passwordHash String
+  plan         Plan     @default(STARTER)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  whatsappInstance WhatsappInstance?
+  erpConnections   ERPConnection[]
+  flows            Flow[]
+  orders           Order[]
+  users            User[]
+
+  @@map("tenants")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// User
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  email     String
+  role      UserRole @default(MEMBER)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, email])
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WhatsApp Instance
+// Gerenciada pelo FlowOps — usuário nunca vê instanceId
+// ─────────────────────────────────────────────────────────────────────────────
+
+model WhatsappInstance {
+  id          String   @id @default(cuid())
+  tenantId    String   @unique
+  instanceId  String   @unique  // ID interno gerado pelo FlowOps ex: "flowops-a8f3c2"
+  status      WaStatus @default(DISCONNECTED)
+  phone       String?            // número conectado ex: "+5511999999999"
+  connectedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("whatsapp_instances")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ERP Connection
+// config armazena tokens criptografados com ENCRYPTION_KEY
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ERPConnection {
+  id        String  @id @default(cuid())
+  tenantId  String
+  type      ERPType
+  config    Json              // { accessToken, refreshToken, ... } — criptografado
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, type])
+  @@map("erp_connections")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Flow
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Flow {
+  id          String     @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  status      FlowStatus @default(DRAFT)
+  steps       Json       // FlowStep[] serializado (ver packages/shared/types)
+
+  // Métricas (atualizadas a cada execução)
+  runCount    Int   @default(0)
+  successRate Float @default(0)  // 0.0 – 1.0
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@map("flows")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Order
+// Representa um pedido recebido via WhatsApp
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Order {
+  id       String @id @default(cuid())
+  tenantId String
+  flowId   String?
+
+  // ── Origem WhatsApp ──────────────────────────────────────────────────────
+  fromPhone  String   // número do cliente ex: "+5511999999999"
+  rawMessage String   // mensagem original (texto ou transcrição de áudio)
+  messageId  String   @unique  // ID da mensagem no WhatsApp (idempotência)
+
+  // ── Extração por IA ──────────────────────────────────────────────────────
+  extractedData   Json?    // ExtractedOrder serializado
+  confidence      Float?   // 0.0 – 1.0
+  confidenceLevel String?  // 'high' | 'medium' | 'low'
+
+  // ── Resultado no ERP ─────────────────────────────────────────────────────
+  erpType    ERPType?
+  erpOrderId String?   // ID no ERP
+  erpOrderRef String?  // referência legível ex: "NV-00421"
+  erpOrderUrl String?  // link direto no ERP
+
+  // ── Status e performance ─────────────────────────────────────────────────
+  status       OrderStatus @default(PENDING)
+  processingMs Int?         // tempo total de processamento em ms
+  errorMessage String?      // última mensagem de erro
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  flow   Flow?        @relation(fields: [flowId], references: [id])
+  events OrderEvent[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([fromPhone])
+  @@map("orders")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OrderEvent
+// Timeline de cada etapa do processamento — visível no detalhe do pedido
+// ─────────────────────────────────────────────────────────────────────────────
+
+model OrderEvent {
+  id      String @id @default(cuid())
+  orderId String
+
+  step       String  // ORDER_STEPS constant ex: 'ai_extracted', 'erp_created'
+  status     String  // 'success' | 'error'
+  data       Json?   // dados relevantes da etapa
+  durationMs Int?    // duração desta etapa específica
+
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+  @@map("order_events")
+}

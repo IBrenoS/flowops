@@ -1,0 +1,28 @@
+{
+  "name": "@flowops/database",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/client.ts",
+  "types": "./src/client.ts",
+  "exports": {
+    ".": "./src/client.ts"
+  },
+  "scripts": {
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:prod": "prisma migrate deploy",
+    "db:studio": "prisma studio",
+    "db:seed": "ts-node prisma/seed.ts",
+    "db:reset": "prisma migrate reset",
+    "build": "echo 'database package does not need build'",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.13.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.13.0",
+    "typescript": "*",
+    "ts-node": "^10.9.0"
+  }
+}

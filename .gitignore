@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+.next/
+!.next/cache/
+out/
+
+# Turbo
+.turbo/
+
+# Prisma
+packages/database/prisma/migrations/*.sql.bak
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# TypeScript
+*.tsbuildinfo
